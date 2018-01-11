@@ -30,7 +30,7 @@ const connectionStrings = [
 ];
 
 const reader = new MongoOplogReader({ connectionStrings, redisClient });
-reader.on('op', op => { console.log(op); });
+reader.on('op', op => console.log(op));
 reader.tail();
 reader.setConnectionStrings(connectionStrings);
 ```
