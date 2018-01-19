@@ -2,7 +2,7 @@
   "name": "mongo-oplog-reader",
   "version": "1.0.0",
   "description": "MongoDB Sharded Cluster Oplog Reader",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -21,5 +21,11 @@
   "bugs": {
     "url": "https://github.com/WW-Digital/mongo-oplog-reader/issues"
   },
-  "homepage": "https://github.com/WW-Digital/mongo-oplog-reader#readme"
+  "homepage": "https://github.com/WW-Digital/mongo-oplog-reader#readme",
+  "dependencies": {
+    "mongo-oplog": "2.1.0"
+  },
+  "devDependencies": {
+    "redis": "^2.8.0"
+  }
 }

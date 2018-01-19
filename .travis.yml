@@ -1,0 +1,18 @@
+sudo: required
+language: node_js
+node_js:
+  - "8"
+  - "7"
+  - "6"
+services:
+  - mongodb
+  - redis
+before_script:
+  - echo "replication:" | sudo tee -a /etc/mongod.conf
+  - |-
+    echo "  replSetName: \"rs0\"" | sudo tee -a /etc/mongod.conf
+  - sudo service mongod restart
+  - travis_retry npm install
+  - |-
+    mongo --eval 'rs.initiate({_id:"rs0", members: [{"_id":1, "host":"localhost:27017"}]})'
+  - mongo --eval 'rs.status()'
