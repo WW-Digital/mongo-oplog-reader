@@ -191,8 +191,10 @@ class MongoOplogReader extends EventEmitter {
           if (data.fromMigrate) return; // ignore shard balancing ops
           if (data.op === 'n') return; // ignore informational no-operation
           this.processOp(data, replSetName, memberName);
+          this.emit('shard-op', { data, replSetName, memberName })
         });
         oplog.on('end', () => {
+          // TODO: reconnect
           console.log('Stream ended');
         });
         oplog.tail();

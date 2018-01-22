@@ -26,6 +26,7 @@
     "mongo-oplog": "2.1.0"
   },
   "devDependencies": {
+    "bluebird": "^3.5.1",
     "redis": "^2.8.0"
   }
 }
