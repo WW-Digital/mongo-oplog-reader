@@ -8,4 +8,4 @@ services:
   - mongodb
   - redis
 before_script:
-  - ./test/travis-mongo.sh
+  - ./test/setup-sharded-cluster.sh
