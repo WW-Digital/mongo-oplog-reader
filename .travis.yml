@@ -8,4 +8,5 @@ services:
   - mongodb
   - redis
 before_script:
+  - service mongod stop
   - ./test/setup-sharded-cluster.sh
