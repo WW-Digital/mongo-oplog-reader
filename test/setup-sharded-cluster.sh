@@ -31,7 +31,7 @@ mongo --port 27118 --eval 'rs.initiate({_id : "rs1", members: [{ _id : 0, host :
 mongos --configdb cfg0/localhost:27019 --bind_ip localhost & sleep 1
 
 # add shard
-mongo --eval 'sh.addShard("rs0/localhost:27018")'
-mongo --eval 'sh.addShard("rs1/localhost:27118")'
-mongo --eval 'sh.enableSharding("testdb")'
-mongo --eval 'sh.shardCollection("testdb.books", { _id: 1 })'
+mongo --host localhost --eval 'sh.addShard("rs0/localhost:27018")'
+mongo --host localhost --eval 'sh.addShard("rs1/localhost:27118")'
+mongo --host localhost --eval 'sh.enableSharding("testdb")'
+mongo --host localhost --eval 'sh.shardCollection("testdb.books", { _id: 1 })'
