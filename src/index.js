@@ -64,7 +64,7 @@ class MongoOplogReader extends EventEmitter {
   }
 
   getLastOpTimeKey(replSetName) {
-    return `${this.keyPrefix}:${replSetName}:lastOpTime`;
+    return `${this.keyPrefix}:lastOpTime:${replSetName}`;
   }
 
   setLastOpTimestamp(replSetName, data) {
@@ -121,7 +121,7 @@ class MongoOplogReader extends EventEmitter {
       const opId = this.getOpId(data);
       const key = `${this.keyPrefix}:emittedEvents`;
       // check if this event has been emitted already by another process
-      this.redisClient.sadd(key, opId, (err, notAlreadyEmitted) => {
+      this.redisClient.set(key, opId, (err, notAlreadyEmitted) => {
         if (err) return reject(err);
         const alreadyEmitted = !notAlreadyEmitted;
         if (alreadyEmitted) return resolve(false);
@@ -132,7 +132,9 @@ class MongoOplogReader extends EventEmitter {
   }
 
   getOpId(data) {
-    return `${data.ts}_${data.h}`;
+    const unixTime = data.ts.high_;
+    const opSeq = data.ts.low_;
+    return `${unixTime}|${opSeq}|${data.h}`;
   }
 
   // determine if we've detected this op on the majority of replset members

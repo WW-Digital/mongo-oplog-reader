@@ -36,8 +36,8 @@ Promise.resolve()
   .then(db => db.collection('books').insert({ title: 'Hello' }))
   .delay(1000)
   .then(() => {
-    assert.ok(opCount === 1, 'Incorrect op count');
-    assert.ok(shardOpCount === 3, 'Incorrect shard op count');
+    assert.ok(opCount === 1, `Incorrect op count '${opCount}'`);
+    assert.ok(shardOpCount === 3, `Incorrect shard op count '${shardOpCount}'`);
   })
   .then(() => {
     console.log('Success.');
