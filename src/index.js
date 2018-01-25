@@ -1,18 +1,14 @@
 /**
- * High availability tailing mongo oplogs of a sharded cluster
+ * Reliable Mongo sharded cluster oplog tailing
  *
  * - Will emit events only after majority write
  * - Will emit events only once even if multiple processes are running
  * - Will resume tailing after the last emitted op
  * - Ability to accept a new set of oplog hosts (i.e. if a shard is added)
  *
- * TODO:
- *  - Add TTL for redis keys
- *
  * More info:
  *  - https://www.mongodb.com/blog/post/tailing-mongodb-oplog-sharded-clusters
  *  - https://www.mongodb.com/blog/post/pitfalls-and-workarounds-for-tailing-the-oplog-on-a-mongodb-sharded-cluster
- *
  */
 
 const MongoDB = require('mongodb');
@@ -21,6 +17,7 @@ const EventEmitter = require('eventemitter3');
 
 const Timestamp = MongoDB.Timestamp;
 const defaultKeyPrefix = 'mongoOplogReader';
+const defaultTTL = 60 * 60 * 24;
 
 class MongoOplogReader extends EventEmitter {
 
@@ -29,7 +26,9 @@ class MongoOplogReader extends EventEmitter {
    * @param options
    *  - connectionStrings {String[]} a list of mongodb connection strings
    *  - redisClient {Object}
-   *  - keyPrefix {String} the redis key prefix (default: mongoOplogReader)
+   *  - redundancy {Integer} number of processes per shard
+   *  - ttl {Integer} max time it may take a cluster to recover (in seconds)
+   *  - keyPrefix {String} the redis key prefix (default: 'mongoOplogReader')
    */
   constructor(options) {
     super();
@@ -37,13 +36,14 @@ class MongoOplogReader extends EventEmitter {
       throw new Error('connectionStrings is required.');
     }
     if (!options.redisClient || !options.redisClient.sadd) {
-      throw new Error('redisClient must support GET,SET,SADD,SCARD commands.');
+      throw new Error('redisClient must support: expire, get, sadd, scard, set, setnx');
     }
     this.connectionStrings = options.connectionStrings;
     this.redisClient = options.redisClient;
     this.oplogs = {};
     this.replSets = {};
     this.keyPrefix = options.keyPrefix || defaultKeyPrefix;
+    this.ttl = options.ttl || defaultTTL;
   }
 
   /**
@@ -119,14 +119,17 @@ class MongoOplogReader extends EventEmitter {
   emitEvent(data) {
     return new Promise((resolve, reject) => {
       const opId = this.getOpId(data);
-      const key = `${this.keyPrefix}:emittedEvents`;
+      const key = `${this.keyPrefix}:emittedEvents:${opId}`;
       // check if this event has been emitted already by another process
-      this.redisClient.set(key, opId, (err, notAlreadyEmitted) => {
+      this.redisClient.setnx(key, true, (err, notAlreadyEmitted) => {
         if (err) return reject(err);
         const alreadyEmitted = !notAlreadyEmitted;
         if (alreadyEmitted) return resolve(false);
-        this.emit('op', data);
-        return resolve(true);
+        this.redisClient.expire(key, this.ttl, err => {
+          if (err) return reject(err);
+          this.emit('op', data);
+          return resolve(true);
+        });
       });
     });
   }
@@ -145,11 +148,14 @@ class MongoOplogReader extends EventEmitter {
       // add this member to the set of members that received this op
       this.redisClient.sadd(key, memberName, (err) => {
         if (err) return reject(err);
-        // check if this op has been received by the majority of members
-        this.redisClient.scard(key, (err, numMembers) => {
+        this.redisClient.expire(key, this.ttl, err => {
           if (err) return reject(err);
-          const majority = Math.ceil(Object.keys(this.replSets[replSetName]).length / 2);
-          return resolve(numMembers >= majority);
+          // check if this op has been received by the majority of members
+          this.redisClient.scard(key, (err, numMembers) => {
+            if (err) return reject(err);
+            const majority = Math.ceil(Object.keys(this.replSets[replSetName]).length / 2);
+            return resolve(numMembers >= majority);
+          });
         });
       });
     });
