@@ -125,9 +125,9 @@ class MongoOplogReader extends EventEmitter {
         if (err) return reject(err);
         const alreadyEmitted = !notAlreadyEmitted;
         if (alreadyEmitted) return resolve(false);
+        this.emit('op', data);
         this.redisClient.expire(key, this.ttl, err => {
           if (err) return reject(err);
-          this.emit('op', data);
           return resolve(true);
         });
       });
