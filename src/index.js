@@ -102,10 +102,11 @@ class MongoOplogReader extends EventEmitter {
     newConnStrings.forEach(newConnStr => {
       const exists = Object.keys(this.oplogs).includes(newConnStr);
       if (!exists) {
-        // start reading the oplog of a new shard
+        // new shard!
+        // TODO: if this replSet has been seen before, start tailing at lastOpTime
         console.log('new oplog:', newConnStr);
-        // TODO: do we need to start the tail at a time in the past?
-        this.tailHost(newConnStr);
+        // tail starting from the beginning of the oplog
+        this.tailHost(newConnStr, { since: 1 });
       }
     });
     this.connectionStrings = Object.keys(this.oplogs);
@@ -175,13 +176,14 @@ class MongoOplogReader extends EventEmitter {
       });
   }
 
+  // TODO: currently, we assume a correct/healthy replSet state at startup
   setMembersOfReplSet(db) {
     return db.admin().replSetGetStatus()
       .then(info => {
         const replSetName = info.set;
         this.replSets[replSetName] = this.replSets[replSetName] || {};
         info.members.forEach(member => {
-          if (!member.health) return;
+          if (!member.health) return; // ignore unhealthy members
           this.replSets[info.set][member.name] = member;
         });
         return info;
