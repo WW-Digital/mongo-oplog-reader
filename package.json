@@ -1,0 +1,32 @@
+{
+  "name": "mongo-oplog-reader",
+  "version": "1.0.0",
+  "description": "MongoDB Sharded Cluster Oplog Reader",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WW-Digital/mongo-oplog-reader.git"
+  },
+  "keywords": [
+    "mongo",
+    "mongodb",
+    "oplog",
+    "shard"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/WW-Digital/mongo-oplog-reader/issues"
+  },
+  "homepage": "https://github.com/WW-Digital/mongo-oplog-reader#readme",
+  "dependencies": {
+    "mongo-oplog": "2.1.0"
+  },
+  "devDependencies": {
+    "bluebird": "^3.5.1",
+    "redis": "^2.8.0"
+  }
+}

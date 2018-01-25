@@ -1,0 +1,12 @@
+sudo: required
+language: node_js
+node_js:
+  - "8"
+  - "6"
+services:
+  - mongodb
+  - redis
+before_script:
+  - sudo service mongod stop
+  - ./test/setup-sharded-cluster.sh
+  - sleep 5
