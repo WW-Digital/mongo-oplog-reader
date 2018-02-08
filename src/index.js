@@ -14,18 +14,26 @@
 const MongoDB = require('mongodb');
 const MongoOplog = require('mongo-oplog');
 const EventEmitter = require('eventemitter3');
+const Promise = require('bluebird');
+const RedisLock = require('redislock');
 
 const Timestamp = MongoDB.Timestamp;
-const defaultKeyPrefix = 'mongoOplogReader';
-const defaultTTL = 60 * 60 * 24;
+
+const defaults = {
+  keyPrefix: 'mongoOplogReader',
+  ttl: 60 * 60 * 24, // amount of time to keep track of the emit status of an op
+  redundancy: 1,
+  masterDuration: 30,
+  healthcheckDuration: 10
+};
 
 class MongoOplogReader extends EventEmitter {
 
   /**
-   * Instantiate a new MongoOplogReader
+   * Create a new MongoOplogReader
    * @param options
    *  - connectionStrings {String[]} a list of mongodb connection strings
-   *  - redisClient {Object}
+   *  - redisClient {Object} an instance of the 'redis' module
    *  - redundancy {Integer} number of processes per shard
    *  - ttl {Integer} max time it may take a cluster to recover (in seconds)
    *  - keyPrefix {String} the redis key prefix (default: 'mongoOplogReader')
@@ -36,14 +44,161 @@ class MongoOplogReader extends EventEmitter {
       throw new Error('connectionStrings is required.');
     }
     if (!options.redisClient || !options.redisClient.sadd) {
-      throw new Error('redisClient must support: expire, get, sadd, scard, set, setnx');
+      throw new Error('Invalid redisClient.');
     }
     this.connectionStrings = options.connectionStrings;
-    this.redisClient = options.redisClient;
+    this.redisClient = Promise.promisifyAll(options.redisClient);
+    this.lock = RedisLock.createLock(options.redisClient);
     this.oplogs = {};
     this.replSets = {};
-    this.keyPrefix = options.keyPrefix || defaultKeyPrefix;
-    this.ttl = options.ttl || defaultTTL;
+    this.redundancy = options.redundancy || defaults.redundancy;
+    this.keyPrefix = options.keyPrefix || defaults.keyPrefix;
+    this.ttl = options.ttl || defaults.ttl;
+    this.masterDuration = options.masterDuration || defaults.masterDuration;
+    this.healthcheckDuration = options.healthcheckDuration || defaults.healthcheckDuration;
+    this.workerId = `${Math.random()}`.substr(2);
+    this.workerRegistrationKey = `${this.keyPrefix}:workerIds`;
+    this.assignmentsByConnStr = {};
+    this.assignmentsByWorkerId = {};
+  }
+
+  start() {
+    return Promise.resolve()
+      .then(() => this.registerWorker())
+      .then(() => this.acquireMasterLock())
+      .then(() => this.startPolling());
+  }
+
+  startPolling() {
+    // try to acquire the master lock every 15-30 seconds by default
+    const masterMs = this.masterDuration * 500;
+    this.masterInterval = setInterval(() => {
+      const randomDelay = Math.floor(masterMs * Math.random());
+      setTimeout(() => this.acquireMasterLock(), randomDelay);
+    }, masterMs);
+
+    // re-register this worker every 10 seconds by default
+    const healthcheckMs = this.healthcheckDuration * 1000;
+    this.healthcheckInterval = setInterval(() => this.registerWorker(), healthcheckMs);
+  }
+
+  /**
+   * If the "master" lock is acquired, this worker will be responsible for
+   * assigning oplogs to workers
+   */
+  acquireMasterLock() {
+    const key = `${this.keyPrefix}:master`;
+    return this.lock.acquire(key, {
+      timeout: this.masterDuration * 1000,
+      retries: 0
+    })
+      .then(() => {
+        console.log(this.workerId, 'is master.');
+        return this.assignWorkers();
+      })
+      // ignore lock acquisition errors
+      .catch(err => {});
+  }
+
+  registerWorker() {
+    const key = this.workerRegistrationKey;
+    const now = Date.now();
+    return this.redisClient.zaddAsync(key, now, this.workerId)
+      .then(() => this.startNewAssignments())
+  }
+
+  getWorkerIds() {
+    const expiredTime = Date.now() - (this.healthcheckDuration * 1000);
+    const key = this.workerRegistrationKey;
+    return Promise.resolve()
+      // delete workers that have failed to renew their registration
+      .then(() => this.redisClient.zremrangebyscoreAsync(key, '-inf', expiredTime))
+      // get active workers
+      .then(() => this.redisClient.zrangeAsync(key, 0, -1));
+  }
+
+  getWorkerAssignmentsKey(workerId) {
+    return `${this.keyPrefix}:worker:${workerId}`;
+  }
+
+  readWorkerAssignmentsFromRedis(workerId) {
+    const key = this.getWorkerAssignmentsKey(workerId);
+    return this.redisClient.smembersAsync(key);
+  }
+
+  writeWorkerAssignmentsToRedis() {
+    return Promise.map(Object.keys(this.assignmentsByWorkerId), workerId => {
+      const key = this.getWorkerAssignmentsKey(workerId);
+      const connStrs = this.assignmentsByWorkerId[workerId];
+      console.log('write', key, connStrs);
+      return this.redisClient.saddAsync(key, connStrs)
+        .then(() => this.redisClient.expireAsync(key, this.masterDuration * 60));
+    });
+  }
+
+  recordAssignment(workerId, connStr) {
+    this.assignmentsByConnStr[connStr] = this.assignmentsByConnStr[connStr] || [];
+    this.assignmentsByConnStr[connStr].push(workerId);
+    this.assignmentsByWorkerId[workerId] = this.assignmentsByWorkerId[workerId] || [];
+    this.assignmentsByWorkerId[workerId].push(connStr);
+  }
+
+  getAvailableWorkerId() {
+    let availableWorkerId = this.workerId;
+    Object.keys(this.assignmentsByWorkerId).forEach(workerId => {
+      if (this.assignmentsByWorkerId[workerId].length < this.assignmentsByWorkerId[availableWorkerId]) {
+        availableWorkerId = workerId;
+      }
+    });
+    return availableWorkerId;
+  }
+
+  populateWorkerAssignments() {
+    this.assignmentsByConnStr = {};
+    this.assignmentsByWorkerId = {};
+    return this.getWorkerIds()
+      .then(workerIds => {
+        return Promise.map(workerIds, workerId => {
+          return this.readWorkerAssignmentsFromRedis(workerId)
+            .then(connStrs => {
+              connStrs.forEach(connStr => this.recordAssignment(workerId, connStr));
+            });
+        });
+      });
+  }
+
+  assignMoreWorkersIfNecessary() {
+    return Promise.map(this.connectionStrings, connStr => {
+      while (true) {
+        const workers = this.assignmentsByConnStr[connStr] || [];
+        if (workers.length >= this.redundancy) {
+          break;
+        }
+        const workerId = this.getAvailableWorkerId();
+        this.recordAssignment(workerId, connStr);
+      }
+    });
+  }
+
+  assignWorkers() {
+    return Promise.resolve()
+      .then(() => this.populateWorkerAssignments())
+      .then(() => this.assignMoreWorkersIfNecessary())
+      .then(() => this.writeWorkerAssignmentsToRedis())
+      .then(() => this.startNewAssignments())
+  }
+
+  startNewAssignments() {
+    const inProgressConnStrs = Object.keys(this.oplogs);
+    return this.readWorkerAssignmentsFromRedis(this.workerId)
+      .then(connStrs => {
+        connStrs.forEach(connStr => {
+          if (inProgressConnStrs.includes(connStr)) {
+            return;
+          }
+          this.tailHost(connStr);
+        });
+      });
   }
 
   /**
@@ -72,19 +227,15 @@ class MongoOplogReader extends EventEmitter {
     const unixTime = data.ts.high_;
     const opSeq = data.ts.low_;
     const val = `${unixTime}|${opSeq}`;
-    this.redisClient.set(key, val);
+    return this.redisClient.setAsync(key, val);
   }
 
   getLastOpTimestamp(replSetName) {
     const key = this.getLastOpTimeKey(replSetName);
-    return new Promise((resolve, reject) => {
-      this.redisClient.get(key, (err, val) => {
-        if (err) return reject(err);
-        if (!val) return resolve();
-        const [unixTimestamp, opSeq] = val.split('|').map(n => Number(n));
-        const ts = Timestamp(opSeq, unixTimestamp);
-        resolve(ts);
-      })
+    return this.redisClient.getAsync(key).then(val => {
+      if (!val) return null;
+      const [unixTimestamp, opSeq] = val.split('|').map(n => Number(n));
+      return Timestamp(opSeq, unixTimestamp);
     });
   }
 
@@ -118,20 +269,14 @@ class MongoOplogReader extends EventEmitter {
    * @return {Boolean} whether the event was emitted (false if previously emitted)
    */
   emitEvent(data) {
-    return new Promise((resolve, reject) => {
-      const opId = this.getOpId(data);
-      const key = `${this.keyPrefix}:emittedEvents:${opId}`;
-      // check if this event has been emitted already by another process
-      this.redisClient.setnx(key, true, (err, notAlreadyEmitted) => {
-        if (err) return reject(err);
-        const alreadyEmitted = !notAlreadyEmitted;
-        if (alreadyEmitted) return resolve(false);
-        this.emit('op', data);
-        this.redisClient.expire(key, this.ttl, err => {
-          if (err) return reject(err);
-          return resolve(true);
-        });
-      });
+    const opId = this.getOpId(data);
+    const key = `${this.keyPrefix}:emittedEvents:${opId}`;
+    // check if this event has been emitted already by another process
+    return this.redisClient.setnxAsync(key, true).then(notAlreadyEmitted => {
+      const alreadyEmitted = !notAlreadyEmitted;
+      if (alreadyEmitted) return false;
+      this.emit('op', data);
+      return this.redisClient.expireAsync(key, this.ttl).then(() => true);
     });
   }
 
@@ -143,23 +288,17 @@ class MongoOplogReader extends EventEmitter {
 
   // determine if we've detected this op on the majority of replset members
   isOpMajorityDetected(replSetName, memberName, data) {
-    return new Promise((resolve, reject) => {
-      const opId = this.getOpId(data);
-      const key = `${this.keyPrefix}:op:${opId}`;
-      // add this member to the set of members that received this op
-      this.redisClient.sadd(key, memberName, (err) => {
-        if (err) return reject(err);
-        this.redisClient.expire(key, this.ttl, err => {
-          if (err) return reject(err);
-          // check if this op has been received by the majority of members
-          this.redisClient.scard(key, (err, numMembers) => {
-            if (err) return reject(err);
-            const majority = Math.ceil(Object.keys(this.replSets[replSetName]).length / 2);
-            return resolve(numMembers >= majority);
-          });
-        });
+    const opId = this.getOpId(data);
+    const key = `${this.keyPrefix}:op:${opId}`;
+    // add this member to the set of members that received this op
+    return this.redisClient.saddAsync(key, memberName)
+      .then(() => this.redisClient.expireAsync(key, this.ttl))
+      // check if this op has been received by the majority of members
+      .then(() => this.redisClient.scardAsync(key))
+      .then(numMembers => {
+        const majority = Math.ceil(Object.keys(this.replSets[replSetName]).length / 2);
+        return numMembers >= majority;
       });
-    });
   }
 
   processOp(data, replSetName, memberName) {
@@ -191,8 +330,9 @@ class MongoOplogReader extends EventEmitter {
   }
 
   tailHost(connStr, options) {
-    MongoDB.MongoClient.connect(connStr).then(db => {
+    return MongoDB.MongoClient.connect(connStr).then(db => {
       const oplog = MongoOplog(db, options);
+      console.log('new oplog', connStr);
       this.oplogs[connStr] = oplog;
       this.setMembersOfReplSet(db).then(info => {
         const replSetName = info.set;
