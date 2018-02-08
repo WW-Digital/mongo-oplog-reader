@@ -35,7 +35,7 @@ const url = 'mongodb://localhost:27017/testdb';
 Promise.resolve()
   .then(() => MongoDB.MongoClient.connect(url))
   .then(db => db.collection('books').insert({ title: 'Hello', rand: Math.random() }))
-  .delay(1000)
+  .delay(3000)
   .then(() => {
     assert.ok(opCount === 1, `Incorrect op count '${opCount}'`);
     assert.ok(shardOpCount === 3, `Incorrect shard op count '${shardOpCount}'`);
