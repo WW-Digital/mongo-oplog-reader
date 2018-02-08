@@ -130,7 +130,6 @@ class MongoOplogReader extends EventEmitter {
     return Promise.map(Object.keys(this.assignmentsByWorkerId), workerId => {
       const key = this.getWorkerAssignmentsKey(workerId);
       const connStrs = this.assignmentsByWorkerId[workerId];
-      console.log('write', key, connStrs);
       return this.redisClient.saddAsync(key, connStrs)
         .then(() => this.redisClient.expireAsync(key, this.masterDuration * 60));
     });
@@ -201,23 +200,6 @@ class MongoOplogReader extends EventEmitter {
       });
   }
 
-  /**
-   * Begin tailing all oplogs
-   * @param options
-   *  - since {BsonTimestamp|Int} - the timestamp to start tailing the oplogs from
-   */
-  tail(options) {
-    if (options && options.since) {
-      return this.connectionStrings.forEach(connStr => this.tailHost(connStr, options));
-    }
-    this.getLastOpTimestamp()
-      .then(ts => {
-        const opts = Object.assign({}, options, { since: ts });
-        this.connectionStrings.forEach(connStr => this.tailHost(connStr, opts));
-      })
-      .catch(console.log);
-  }
-
   getLastOpTimeKey(replSetName) {
     return `${this.keyPrefix}:lastOpTime:${replSetName}`;
   }
@@ -240,27 +222,7 @@ class MongoOplogReader extends EventEmitter {
   }
 
   setConnectionStrings(newConnStrings) {
-    // destroy old/unneeded oplog connections
-    Object.keys(this.oplogs).forEach(connStr => {
-      if (!newConnStrings.includes(connStr)) {
-        this.oplogs[connStr].destroy()
-          .then(() => {
-            console.log('removing oplog:', connStr);
-            delete this.oplogs[connStr];
-          });
-      }
-    });
-    newConnStrings.forEach(newConnStr => {
-      const exists = Object.keys(this.oplogs).includes(newConnStr);
-      if (!exists) {
-        // new shard!
-        // TODO: if this replSet has been seen before, start tailing at lastOpTime
-        console.log('new oplog:', newConnStr);
-        // tail starting from the beginning of the oplog
-        this.tailHost(newConnStr, { since: 1 });
-      }
-    });
-    this.connectionStrings = Object.keys(this.oplogs);
+    this.connectionStrings = newConnStrings;
   }
 
   /**
@@ -329,25 +291,26 @@ class MongoOplogReader extends EventEmitter {
       });
   }
 
-  tailHost(connStr, options) {
+  tailHost(connStr) {
     return MongoDB.MongoClient.connect(connStr).then(db => {
-      const oplog = MongoOplog(db, options);
-      console.log('new oplog', connStr);
-      this.oplogs[connStr] = oplog;
-      this.setMembersOfReplSet(db).then(info => {
+      return this.setMembersOfReplSet(db).then(info => {
         const replSetName = info.set;
         const memberName = info.members.find(member => member.self).name;
-        oplog.on('op', data => {
-          if (data.fromMigrate) return; // ignore shard balancing ops
-          if (data.op === 'n') return; // ignore informational no-operation
-          this.processOp(data, replSetName, memberName);
-          this.emit('shard-op', { data, replSetName, memberName })
+        return this.getLastOpTimestamp(replSetName).then(ts => {
+          const oplog = MongoOplog(db, { since: ts });
+          this.oplogs[connStr] = oplog;
+          oplog.on('op', data => {
+            if (data.fromMigrate) return; // ignore shard balancing ops
+            if (data.op === 'n') return; // ignore informational no-operation
+            this.processOp(data, replSetName, memberName);
+            this.emit('shard-op', {data, replSetName, memberName})
+          });
+          oplog.on('end', () => {
+            // TODO: reconnect
+            console.log('Stream ended');
+          });
+          oplog.tail();
         });
-        oplog.on('end', () => {
-          // TODO: reconnect
-          console.log('Stream ended');
-        });
-        oplog.tail();
       });
     });
   }

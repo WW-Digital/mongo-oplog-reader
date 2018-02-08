@@ -23,6 +23,7 @@ reader.on('op', op => {
   opCount += 1;
   console.log(op);
 });
+
 reader.on('shard-op', op => {
   shardOpCount += 1;
 });
@@ -32,9 +33,9 @@ reader.start().catch(console.log);
 const url = 'mongodb://localhost:27017/testdb';
 
 Promise.resolve()
-  .delay(3000)
   .then(() => MongoDB.MongoClient.connect(url))
-  .then(db => db.collection('books').insert({ title: 'Hello' }))
+  .then(db => db.collection('books').insert({ title: 'Hello', rand: Math.random() }))
+  .delay(1000)
   .then(() => {
     assert.ok(opCount === 1, `Incorrect op count '${opCount}'`);
     assert.ok(shardOpCount === 3, `Incorrect shard op count '${shardOpCount}'`);
