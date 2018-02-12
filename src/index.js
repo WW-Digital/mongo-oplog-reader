@@ -40,9 +40,6 @@ class MongoOplogReader extends EventEmitter {
    */
   constructor(options) {
     super();
-    if (!Array.isArray(options.connectionStrings) || !options.connectionStrings.length) {
-      throw new Error('connectionStrings is required.');
-    }
     if (!options.redisClient || !options.redisClient.sadd) {
       throw new Error('Invalid redisClient.');
     }
@@ -63,6 +60,9 @@ class MongoOplogReader extends EventEmitter {
   }
 
   start() {
+    if (!Array.isArray(this.connectionStrings) || !this.connectionStrings.length) {
+      throw new Error('There are no connectionStrings.');
+    }
     return Promise.resolve()
       .then(() => this.registerWorker())
       .then(() => this.acquireMasterLock())
