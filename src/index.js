@@ -16,8 +16,10 @@ const MongoOplog = require('mongo-oplog');
 const EventEmitter = require('eventemitter3');
 const Promise = require('bluebird');
 const RedisLock = require('redislock');
+const Debug = require('debug');
 
 const Timestamp = MongoDB.Timestamp;
+const debug = Debug('MongoOplogReader');
 
 const defaults = {
   keyPrefix: 'mongoOplogReader',
@@ -93,7 +95,7 @@ class MongoOplogReader extends EventEmitter {
       retries: 0
     })
       .then(() => {
-        console.log(this.workerId, 'is master.');
+        debug(`${this.workerId} is master.`);
         return this.assignWorkers();
       })
       // ignore lock acquisition errors
@@ -149,6 +151,7 @@ class MongoOplogReader extends EventEmitter {
         availableWorkerId = workerId;
       }
     });
+    debug(`availableWorkerId: ${availableWorkerId}`);
     return availableWorkerId;
   }
 
@@ -264,6 +267,7 @@ class MongoOplogReader extends EventEmitter {
   }
 
   processOp(data, replSetName, memberName) {
+    debug(`processOp: ${replSetName} ${memberName} %o`, data);
     return this.isOpMajorityDetected(replSetName, memberName, data)
       .then(hasMajority => {
         if (hasMajority) {
@@ -279,14 +283,14 @@ class MongoOplogReader extends EventEmitter {
 
   // TODO: currently, we assume a correct/healthy replSet state at startup
   setMembersOfReplSet(db) {
-    return db.admin().replSetGetStatus()
+    return db.command({ 'isMaster': 1 })
       .then(info => {
-        const replSetName = info.set;
+        const replSetName = info.setName;
         this.replSets[replSetName] = this.replSets[replSetName] || {};
-        info.members.forEach(member => {
-          if (!member.health) return; // ignore unhealthy members
-          this.replSets[info.set][member.name] = member;
+        info.hosts.forEach(host => {
+          this.replSets[replSetName][host] = true;
         });
+        debug('replSets: %o', this.replSets);
         return info;
       });
   }
@@ -294,8 +298,8 @@ class MongoOplogReader extends EventEmitter {
   tailHost(connStr) {
     return MongoDB.MongoClient.connect(connStr).then(db => {
       return this.setMembersOfReplSet(db).then(info => {
-        const replSetName = info.set;
-        const memberName = info.members.find(member => member.self).name;
+        const replSetName = info.setName;
+        const memberName = info.me;
         return this.getLastOpTimestamp(replSetName).then(ts => {
           const oplog = MongoOplog(db, { since: ts });
           this.oplogs[connStr] = oplog;
@@ -303,7 +307,7 @@ class MongoOplogReader extends EventEmitter {
             if (data.fromMigrate) return; // ignore shard balancing ops
             if (data.op === 'n') return; // ignore informational no-operation
             this.processOp(data, replSetName, memberName);
-            this.emit('shard-op', {data, replSetName, memberName})
+            this.emit('shard-op', { data, replSetName, memberName })
           });
           oplog.on('end', () => {
             // TODO: reconnect
