@@ -20,27 +20,32 @@ let opCount = 0;
 let shardOpCount = 0;
 
 reader.on('op', op => {
+  if (op.ns !== 'testdb.books') return;
   opCount += 1;
   console.log(op);
 });
 
 reader.on('shard-op', op => {
+  if (op.ns !== 'testdb.books') return;
   shardOpCount += 1;
 });
-
-reader.start().catch(console.log);
 
 const url = 'mongodb://localhost:27017/testdb';
 
 Promise.resolve()
   .then(() => MongoDB.MongoClient.connect(url))
-  // .delay(1000)
-  .then(db => db.collection('books').insert({ title: 'Hello', rand: Math.random() }))
-  .then(() => console.log('inserted a document.'))
+  .then(db => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
+  .then(() => console.log('inserted document 1'))
+  .then(() => reader.start())
+  .then(db => db.collection('books').insert({ title: 'Hello 2', rand: Math.random() }))
+  .then(() => console.log('inserted document 2'))
+  .delay(3000)
+  .then(db => db.collection('books').insert({ title: 'Hello 3', rand: Math.random() }))
+  .then(() => console.log('inserted document 3'))
   .delay(3000)
   .then(() => {
-    assert.ok(opCount === 1, `Incorrect op count '${opCount}'`);
-    assert.ok(shardOpCount === 3, `Incorrect shard op count '${shardOpCount}'`);
+    assert.ok(opCount === 3, `Incorrect op count '${opCount}'`);
+    assert.ok(shardOpCount === 9, `Incorrect shard op count '${shardOpCount}'`);
   })
   .then(() => {
     console.log('Success.');
