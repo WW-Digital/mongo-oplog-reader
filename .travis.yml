@@ -9,4 +9,4 @@ services:
 before_script:
   - sudo service mongod stop
   - ./test/setup-sharded-cluster.sh
-  - sleep 60
+  - sleep 10

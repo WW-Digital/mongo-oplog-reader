@@ -4,7 +4,7 @@
   "description": "MongoDB Sharded Cluster Oplog Reader",
   "main": "src/index.js",
   "scripts": {
-    "test": "node test"
+    "test": "DEBUG=MongoOplogReader node test"
   },
   "repository": {
     "type": "git",
