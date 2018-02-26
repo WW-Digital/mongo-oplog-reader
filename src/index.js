@@ -305,7 +305,8 @@ class MongoOplogReader extends EventEmitter {
         const memberName = info.me;
         return this.getLastOpTimestamp(replSetName).then(ts => {
           debug(`${replSetName} ts: %s`, ts);
-          const oplog = MongoOplog(db, { since: ts });
+          const opts = ts ? { since: ts } : {};
+          const oplog = MongoOplog(db, opts);
           this.oplogs[connStr] = oplog;
           oplog.on('op', data => {
             if (data.fromMigrate) return; // ignore shard balancing ops
