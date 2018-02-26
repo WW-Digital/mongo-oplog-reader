@@ -27,7 +27,7 @@ mongod --shardsvr --replSet rs1 --dbpath test-data/db12 --bind_ip localhost --po
 mongod --shardsvr --replSet rs1 --dbpath test-data/db13 --bind_ip localhost --port 27138 & sleep 1
 mongo --port 27118 --eval 'rs.initiate({_id : "rs1", members: [{ _id : 0, host : "localhost:27118" }, { _id : 1, host : "localhost:27128" }, { _id : 2, host : "localhost:27138" }]})'
 
-# start mongos
+# start mongos on default port 27017
 mongos --configdb cfg0/localhost:27019 --bind_ip localhost & sleep 30
 
 # add shard

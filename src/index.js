@@ -23,10 +23,10 @@ const debug = Debug('MongoOplogReader');
 
 const defaults = {
   keyPrefix: 'mongoOplogReader',
-  ttl: 60 * 60 * 24, // amount of time to keep track of the emit status of an op
+  ttl: 60 * 60 * 24, // amount of time in seconds to keep track of the emit status of an op
   redundancy: 1,
-  masterDuration: 30,
-  healthcheckDuration: 10
+  masterDuration: 30, // in seconds
+  healthcheckDuration: 10 // in seconds
 };
 
 class MongoOplogReader extends EventEmitter {
@@ -194,6 +194,7 @@ class MongoOplogReader extends EventEmitter {
     const inProgressConnStrs = Object.keys(this.oplogs);
     return this.readWorkerAssignmentsFromRedis(this.workerId)
       .then(connStrs => {
+        debug(`workerId[${this.workerId}] assignments: %o`, connStrs);
         connStrs.forEach(connStr => {
           if (inProgressConnStrs.includes(connStr)) {
             return;
@@ -296,18 +297,21 @@ class MongoOplogReader extends EventEmitter {
   }
 
   tailHost(connStr) {
+    debug(`tailHost: ${connStr}`);
     return MongoDB.MongoClient.connect(connStr).then(db => {
       return this.setMembersOfReplSet(db).then(info => {
+        debug('replSet info: %o', info);
         const replSetName = info.setName;
         const memberName = info.me;
         return this.getLastOpTimestamp(replSetName).then(ts => {
+          debug(`${replSetName} ts: %s`, ts);
           const oplog = MongoOplog(db, { since: ts });
           this.oplogs[connStr] = oplog;
           oplog.on('op', data => {
             if (data.fromMigrate) return; // ignore shard balancing ops
             if (data.op === 'n') return; // ignore informational no-operation
             this.processOp(data, replSetName, memberName);
-            this.emit('shard-op', { data, replSetName, memberName })
+            this.emit('shard-op', { data, replSetName, memberName });
           });
           oplog.on('end', () => {
             // TODO: reconnect

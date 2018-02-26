@@ -34,6 +34,7 @@ const url = 'mongodb://localhost:27017/testdb';
 
 Promise.resolve()
   .then(() => MongoDB.MongoClient.connect(url))
+  .delay(3000)
   .then(db => db.collection('books').insert({ title: 'Hello', rand: Math.random() }))
   .delay(3000)
   .then(() => {
