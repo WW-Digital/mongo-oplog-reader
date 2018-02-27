@@ -59,6 +59,10 @@ class MongoOplogReader extends EventEmitter {
     this.workerRegistrationKey = `${this.keyPrefix}:workerIds`;
     this.assignmentsByConnStr = {};
     this.assignmentsByWorkerId = {};
+
+    if (!Number.isInteger(this.redundancy) || this.redundancy > 10) {
+      throw new Error(`Specified redundancy '${this.redundancy}' should be an integer less than 10.`);
+    }
   }
 
   start() {
@@ -169,13 +173,15 @@ class MongoOplogReader extends EventEmitter {
 
   assignMoreWorkersIfNecessary() {
     return Promise.map(this.connectionStrings, connStr => {
-      while (true) {
-        const workers = this.assignmentsByConnStr[connStr] || [];
-        if (workers.length >= this.redundancy) {
+      let workers = [];
+      while (workers.length < this.redundancy) {
+        const workerId = this.getAvailableWorkerId();
+        // prevent infinite loop if there are no available workerIds
+        if (!workerId) {
           break;
         }
-        const workerId = this.getAvailableWorkerId();
         this.recordAssignment(workerId, connStr);
+        workers = this.assignmentsByConnStr[connStr] || [];
       }
     });
   }
