@@ -26,7 +26,7 @@ reader.on('op', op => {
 });
 
 reader.on('shard-op', op => {
-  if (op.ns !== 'testdb.books') return;
+  if (op.data.ns !== 'testdb.books') return;
   shardOpCount += 1;
 });
 
