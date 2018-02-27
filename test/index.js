@@ -32,24 +32,25 @@ reader.on('shard-op', op => {
 
 const url = 'mongodb://localhost:27017/testdb';
 
-Promise.resolve()
-  .then(() => MongoDB.MongoClient.connect(url))
-  .then(db => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
-  .then(() => console.log('inserted document 1'))
-  .then(() => reader.start())
-  .then(db => db.collection('books').insert({ title: 'Hello 2', rand: Math.random() }))
-  .then(() => console.log('inserted document 2'))
-  .delay(3000)
-  .then(db => db.collection('books').insert({ title: 'Hello 3', rand: Math.random() }))
-  .then(() => console.log('inserted document 3'))
-  .delay(3000)
-  .then(() => {
-    assert.ok(opCount === 3, `Incorrect op count '${opCount}'`);
-    assert.ok(shardOpCount === 9, `Incorrect shard op count '${shardOpCount}'`);
-  })
-  .then(() => {
-    console.log('Success.');
-    process.exit(0);
+MongoDB.MongoClient.connect(url).then(db => {
+  return Promise.resolve()
+    .then(() => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
+    .then(() => console.log('inserted document 1'))
+    .then(() => reader.start())
+    .then(() => db.collection('books').insert({ title: 'Hello 2', rand: Math.random() }))
+    .then(() => console.log('inserted document 2'))
+    .delay(3000)
+    .then(() => db.collection('books').insert({ title: 'Hello 3', rand: Math.random() }))
+    .then(() => console.log('inserted document 3'))
+    .delay(3000)
+    .then(() => {
+      assert.ok(opCount === 3, `Incorrect op count '${opCount}'`);
+      assert.ok(shardOpCount === 9, `Incorrect shard op count '${shardOpCount}'`);
+    })
+    .then(() => {
+      console.log('Success.');
+      process.exit(0);
+    });
   })
   .catch(err => {
     console.log(err);
