@@ -29,6 +29,18 @@ const defaults = {
   healthcheckDuration: 10 // in seconds
 };
 
+const defaultMongoConnectOptions = {
+  server: {
+    poolSize: 100,
+    auto_reconnect: true,
+    socketOptions: {
+      keepAlive: 5000,
+      connectTimeoutMS: 30000,
+      socketTimeout: 30000
+    }
+  }
+};
+
 class MongoOplogReader extends EventEmitter {
 
   /**
@@ -55,6 +67,7 @@ class MongoOplogReader extends EventEmitter {
     this.ttl = options.ttl || defaults.ttl;
     this.masterDuration = options.masterDuration || defaults.masterDuration;
     this.healthcheckDuration = options.healthcheckDuration || defaults.healthcheckDuration;
+    this.mongoConnectOptions = options.mongoConnectOptions || defaultMongoConnectOptions;
     this.workerId = `${Math.random()}`.substr(2);
     this.workerRegistrationKey = `${this.keyPrefix}:workerIds`;
     this.assignmentsByConnStr = {};
@@ -302,28 +315,42 @@ class MongoOplogReader extends EventEmitter {
 
   tailHost(connStr) {
     debug(`tailHost: ${connStr}`);
-    return MongoDB.MongoClient.connect(connStr).then(db => {
-      return this.setMembersOfReplSet(db).then(info => {
-        debug('replSet info: %o', info);
-        const replSetName = info.setName;
-        const memberName = info.me;
-        return this.getLastOpTimestamp(replSetName).then(ts => {
-          debug(`${replSetName} ts: %s`, ts);
-          const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
-          const oplog = MongoOplog(db, opts);
-          this.oplogs[connStr] = oplog;
-          oplog.on('op', data => {
-            if (data.fromMigrate) return; // ignore shard balancing ops
-            if (data.op === 'n') return; // ignore informational no-operation
-            this.processOp(data, replSetName, memberName);
-            this.emit('shard-op', { data, replSetName, memberName });
-          });
-          oplog.on('end', () => {
-            // TODO: reconnect
-            console.log('Stream ended');
-          });
-          oplog.tail();
+    return MongoDB.MongoClient.connect(connStr, this.mongoConnectOptions).then(db => {
+      // We may need this code to reconnect, need to test auto_reconnect
+      // db.on('close', err => {
+      //   console.log(connStr, err);
+      //   this.tailHost(connStr);
+      // });
+      // db.on('error', err => {
+      //   console.log(connStr, err);
+      //   this.tailHost(connStr);
+      // });
+      return this.readFromOplog(connStr, db);
+    });
+  }
+
+  readFromOplog(connStr, db) {
+    debug(`readFromOplog: ${connStr}`);
+    return this.setMembersOfReplSet(db).then(info => {
+      debug('replSet info: %o', info);
+      const replSetName = info.setName;
+      const memberName = info.me;
+      return this.getLastOpTimestamp(replSetName).then(ts => {
+        debug(`${replSetName} ts: %s`, ts);
+        const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
+        const oplog = MongoOplog(db, opts);
+        this.oplogs[connStr] = oplog;
+        oplog.on('op', data => {
+          if (data.fromMigrate) return; // ignore shard balancing ops
+          if (data.op === 'n') return; // ignore informational no-operation
+          this.processOp(data, replSetName, memberName);
+          this.emit('shard-op', { data, replSetName, memberName });
         });
+        oplog.on('end', () => {
+          // oplog stream ended, pick up where we left off with the same db connection
+          this.readFromOplog(connStr, db);
+        });
+        oplog.tail();
       });
     });
   }
