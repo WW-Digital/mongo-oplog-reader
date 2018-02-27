@@ -158,15 +158,13 @@ class MongoOplogReader extends EventEmitter {
   populateWorkerAssignments() {
     this.assignmentsByConnStr = {};
     this.assignmentsByWorkerId = {};
-    return this.getWorkerIds()
-      .then(workerIds => {
-        return Promise.map(workerIds, workerId => {
-          return this.readWorkerAssignmentsFromRedis(workerId)
-            .then(connStrs => {
-              connStrs.forEach(connStr => this.recordAssignment(workerId, connStr));
-            });
+    return this.getWorkerIds().then(workerIds => {
+      return Promise.map(workerIds, workerId => {
+        return this.readWorkerAssignmentsFromRedis(workerId).then(connStrs => {
+          connStrs.forEach(connStr => this.recordAssignment(workerId, connStr));
         });
       });
+    });
   }
 
   assignMoreWorkersIfNecessary() {
