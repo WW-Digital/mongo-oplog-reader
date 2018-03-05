@@ -158,7 +158,9 @@ class MongoOplogReader extends EventEmitter {
       const key = this.getWorkerAssignmentsKey(workerId);
       const connStrs = this.assignmentsByWorkerId[workerId];
       return this.redisClient.saddAsync(key, connStrs)
-        .then(() => this.redisClient.expireAsync(key, this.masterDuration * 60));
+        // If a worker crashes, then the assignments for that workerId will be orphaned.
+        // This expiration will clear orphaned assignments after 2-5 minutes (by default)
+        .then(() => this.redisClient.expireAsync(key, this.masterDuration * 10));
     });
   }
 
