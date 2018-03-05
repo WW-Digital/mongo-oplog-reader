@@ -41,6 +41,14 @@ const defaultMongoConnectOptions = {
   }
 };
 
+const opCode = {
+  COMMAND: 'c',
+  DELETE: 'd',
+  INSERT: 'i',
+  NOOP: 'n',
+  UPDATE: 'u'
+};
+
 class MongoOplogReader extends EventEmitter {
 
   /**
@@ -342,7 +350,7 @@ class MongoOplogReader extends EventEmitter {
         this.oplogs[connStr] = oplog;
         oplog.on('op', data => {
           if (data.fromMigrate) return; // ignore shard balancing ops
-          if (data.op === 'n') return; // ignore informational no-operation
+          if (data.op === opCode.NOOP) return; // ignore informational no-operation
           this.processOp(data, replSetName, memberName);
           this.emit('shard-op', { data, replSetName, memberName });
         });
