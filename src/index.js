@@ -24,7 +24,7 @@ const debug = Debug('MongoOplogReader');
 const defaults = {
   keyPrefix: 'mongoOplogReader',
   ttl: 60 * 60 * 24, // amount of time in seconds to keep track of the emit status of an op
-  redundancy: 1,
+  workersPerOplog: 1,
   masterDuration: 30, // in seconds
   healthcheckDuration: 10 // in seconds
 };
@@ -48,7 +48,7 @@ class MongoOplogReader extends EventEmitter {
    * @param options
    *  - connectionStrings {String[]} a list of mongodb connection strings
    *  - redisClient {Object} an instance of the 'redis' module
-   *  - redundancy {Integer} number of processes per shard
+   *  - workersPerOplog {Integer} number of workers per oplog (for redundancy purposes)
    *  - ttl {Integer} max time it may take a cluster to recover (in seconds)
    *  - keyPrefix {String} the redis key prefix (default: 'mongoOplogReader')
    */
@@ -62,7 +62,7 @@ class MongoOplogReader extends EventEmitter {
     this.lock = RedisLock.createLock(options.redisClient);
     this.oplogs = {};
     this.replSets = {};
-    this.redundancy = options.redundancy || defaults.redundancy;
+    this.workersPerOplog = options.workersPerOplog || defaults.workersPerOplog;
     this.keyPrefix = options.keyPrefix || defaults.keyPrefix;
     this.ttl = options.ttl || defaults.ttl;
     this.masterDuration = options.masterDuration || defaults.masterDuration;
@@ -73,8 +73,8 @@ class MongoOplogReader extends EventEmitter {
     this.assignmentsByConnStr = {};
     this.assignmentsByWorkerId = {};
 
-    if (!Number.isInteger(this.redundancy) || this.redundancy > 10) {
-      throw new Error(`Specified redundancy '${this.redundancy}' should be an integer less than 10.`);
+    if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
+      throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
     }
   }
 
@@ -187,7 +187,7 @@ class MongoOplogReader extends EventEmitter {
   assignMoreWorkersIfNecessary() {
     return Promise.map(this.connectionStrings, connStr => {
       let workers = [];
-      while (workers.length < this.redundancy) {
+      while (workers.length < this.workersPerOplog) {
         const workerId = this.getAvailableWorkerId();
         // prevent infinite loop if there are no available workerIds
         if (!workerId) {
