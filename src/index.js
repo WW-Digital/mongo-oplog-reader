@@ -30,15 +30,11 @@ const defaults = {
 };
 
 const defaultMongoConnectOptions = {
-  server: {
-    poolSize: 100,
-    auto_reconnect: true,
-    socketOptions: {
-      keepAlive: 5000,
-      connectTimeoutMS: 30000,
-      socketTimeout: 30000
-    }
-  }
+  poolSize: 100,
+  autoReconnect: true,
+  keepAlive: 5000,
+  connectTimeoutMS: 30000,
+  socketTimeoutMS: 30000
 };
 
 const opCode = {
