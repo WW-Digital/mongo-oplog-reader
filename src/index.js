@@ -30,15 +30,11 @@ const defaults = {
 };
 
 const defaultMongoConnectOptions = {
-  server: {
-    poolSize: 100,
-    auto_reconnect: true,
-    socketOptions: {
-      keepAlive: 5000,
-      connectTimeoutMS: 30000,
-      socketTimeout: 30000
-    }
-  }
+  poolSize: 100,
+  autoReconnect: true,
+  keepAlive: 5000,
+  connectTimeoutMS: 30000,
+  socketTimeoutMS: 30000
 };
 
 const opCode = {
@@ -76,6 +72,7 @@ class MongoOplogReader extends EventEmitter {
     this.masterDuration = options.masterDuration || defaults.masterDuration;
     this.healthcheckDuration = options.healthcheckDuration || defaults.healthcheckDuration;
     this.mongoConnectOptions = options.mongoConnectOptions || defaultMongoConnectOptions;
+    this.startAt = options.startAt;
     this.workerId = `${Math.random()}`.substr(2);
     this.workerRegistrationKey = `${this.keyPrefix}:workerIds`;
     this.assignmentsByConnStr = {};
@@ -345,7 +342,8 @@ class MongoOplogReader extends EventEmitter {
       debug('replSet info: %o', info);
       const replSetName = info.setName;
       const memberName = info.me;
-      return this.getLastOpTimestamp(replSetName).then(ts => {
+      const startTs = this.startAt ? Promise.resolve(this.startAt) : this.getLastOpTimestamp(replSetName);
+      return startTs.then(ts => {
         debug(`${replSetName} ts: %s`, ts);
         const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
         const oplog = MongoOplog(db, opts);
