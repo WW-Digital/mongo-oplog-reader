@@ -1,5 +1,5 @@
 const Promise = require('bluebird');
-const MongoDB = require('mongodb');
+const { MongoClient } = require('mongodb');
 const MongoOplogReader = require('..');
 const redis = require('redis');
 const assert = require('assert');
@@ -34,7 +34,7 @@ reader.onEvent(op => {
 
 const url = 'mongodb://localhost:27017/testdb';
 
-MongoDB.MongoClient.connect(url).then(db => {
+MongoClient.connect(url).then(db => {
   return Promise.resolve()
     .then(() => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
     .then(() => console.log('inserted document 1'))
@@ -47,7 +47,7 @@ MongoDB.MongoClient.connect(url).then(db => {
     .delay(3000)
     .then(() => {
       assert.ok(opCount === 3, `Incorrect op count '${opCount}'`);
-      assert.ok(asyncOpCount === 9, `Incorrect async op count '${asyncOpCount}'`);
+      assert.ok(asyncOpCount === 3, `Incorrect async op count '${asyncOpCount}'`);
     })
     .then(() => {
       console.log('Success.');
