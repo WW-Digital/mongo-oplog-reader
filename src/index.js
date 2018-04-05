@@ -12,11 +12,11 @@
  */
 
 const MongoDB = require('mongodb');
-const MongoOplog = require('mongo-oplog');
-const EventEmitter = require('eventemitter3');
+const createOplogStream = require('./createOplogStream');
 const Promise = require('bluebird');
 const RedisLock = require('redislock');
 const Debug = require('debug');
+const through2 = require('through2');
 
 const Timestamp = MongoDB.Timestamp;
 const debug = Debug('MongoOplogReader');
@@ -45,7 +45,7 @@ const opCode = {
   UPDATE: 'u'
 };
 
-class MongoOplogReader extends EventEmitter {
+class MongoOplogReader {
 
   /**
    * Create a new MongoOplogReader
@@ -57,7 +57,6 @@ class MongoOplogReader extends EventEmitter {
    *  - keyPrefix {String} the redis key prefix (default: 'mongoOplogReader')
    */
   constructor(options) {
-    super();
     if (!options.redisClient || !options.redisClient.sadd) {
       throw new Error('Invalid redisClient.');
     }
@@ -77,6 +76,7 @@ class MongoOplogReader extends EventEmitter {
     this.workerRegistrationKey = `${this.keyPrefix}:workerIds`;
     this.assignmentsByConnStr = {};
     this.assignmentsByWorkerId = {};
+    this.eventHandlers = [];
 
     if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
       throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
@@ -91,6 +91,10 @@ class MongoOplogReader extends EventEmitter {
       .then(() => this.registerWorker())
       .then(() => this.acquireMasterLock())
       .then(() => this.startPolling());
+  }
+
+  onEvent(fn) {
+    this.eventHandlers.push(fn);
   }
 
   startPolling() {
@@ -265,8 +269,10 @@ class MongoOplogReader extends EventEmitter {
     return this.redisClient.setnxAsync(key, true).then(notAlreadyEmitted => {
       const alreadyEmitted = !notAlreadyEmitted;
       if (alreadyEmitted) return false;
-      this.emit('op', data);
-      return this.redisClient.expireAsync(key, this.ttl).then(() => true);
+      return Promise.resolve()
+        .then(() => this.redisClient.expireAsync(key, this.ttl))
+        .then(() => Promise.map(this.eventHandlers, eventHandler => eventHandler(data)))
+        .then(() => true);
     });
   }
 
@@ -346,19 +352,20 @@ class MongoOplogReader extends EventEmitter {
       return startTs.then(ts => {
         debug(`${replSetName} ts: %s`, ts);
         const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
-        const oplog = MongoOplog(db, opts);
-        this.oplogs[connStr] = oplog;
-        oplog.on('op', data => {
-          if (data.fromMigrate) return; // ignore shard balancing ops
-          if (data.op === opCode.NOOP) return; // ignore informational no-operation
-          this.processOp(data, replSetName, memberName);
-          this.emit('shard-op', { data, replSetName, memberName });
-        });
-        oplog.on('end', () => {
+        const stream = createOplogStream(db, opts);
+        this.oplogs[connStr] = stream;
+        stream.pipe(through2.obj((data, enc, done) => {
+          if (data.fromMigrate) return done(); // ignore shard balancing ops
+          if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
+          this.processOp(data, replSetName, memberName)
+            .then(() => done())
+            .catch(err => done(err));
+        }));
+        stream.on('end', () => {
           // oplog stream ended, pick up where we left off with the same db connection
+          console.log('stream ended');
           this.readFromOplog(connStr, db);
         });
-        oplog.tail();
       });
     });
   }

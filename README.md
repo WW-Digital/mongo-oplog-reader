@@ -9,6 +9,11 @@ Read MongoDB oplogs from a sharded cluster.
 - Resumes from the last emitted event of the replica set (in the case of process crash/stop/restart)
 - Ability to add/remove shards/hosts without restarting
 
+Notes:
+
+- The order of the oplog events is not guaranteed to be strictly chronological if there are multiple 
+  workers per oplog
+
 ## Install
 
 ```
@@ -32,9 +37,16 @@ const connectionStrings = [
   'mongodb://shard1-secondary1/local'
 ];
 
-const reader = new MongoOplogReader({ redisClient });
+const reader = new MongoOplogReader({ 
+  redisClient,
+  workersPerOplog: 1
+});
 reader.setConnectionStrings(connectionStrings);
-reader.on('op', op => console.log(op));
+reader.onEvent(data => {
+  // return a promise to apply backpressure on the oplog stream to prevent a 
+  // build-up of in-memory stream buffering while performing slower async operations
+  return somethingAsync(data);
+});
 reader.start();
 ```
 
