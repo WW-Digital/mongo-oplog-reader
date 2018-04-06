@@ -39,7 +39,7 @@ const connectionStrings = [
 
 const reader = new MongoOplogReader({ 
   redisClient,
-  workersPerOplog: 1
+  workersPerOplog: 1 // total # of redundant workers per oplog (respected across all processes)
 });
 reader.setConnectionStrings(connectionStrings);
 reader.onEvent(data => {

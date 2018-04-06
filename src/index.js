@@ -16,7 +16,7 @@ const createOplogStream = require('./createOplogStream');
 const Promise = require('bluebird');
 const RedisLock = require('redislock');
 const Debug = require('debug');
-const through2 = require('through2');
+const through2Concurrent = require('through2-concurrent');
 
 const Timestamp = MongoDB.Timestamp;
 const debug = Debug('MongoOplogReader');
@@ -24,7 +24,8 @@ const debug = Debug('MongoOplogReader');
 const defaults = {
   keyPrefix: 'mongoOplogReader',
   ttl: 60 * 60 * 24, // amount of time in seconds to keep track of the emit status of an op
-  workersPerOplog: 1,
+  workersPerOplog: 1, // total # of redundant workers per oplog (respected across all processes)
+  maxConcurrencyPerWorker: 10, // max # of oplog events to be processed concurrently per worker
   masterDuration: 30, // in seconds
   healthcheckDuration: 10 // in seconds
 };
@@ -53,6 +54,7 @@ class MongoOplogReader {
    *  - connectionStrings {String[]} a list of mongodb connection strings
    *  - redisClient {Object} an instance of the 'redis' module
    *  - workersPerOplog {Integer} number of workers per oplog (for redundancy purposes)
+   *  - maxConcurrencyPerWorker {Integer} number of concurrent oplog events processed per worker
    *  - ttl {Integer} max time it may take a cluster to recover (in seconds)
    *  - keyPrefix {String} the redis key prefix (default: 'mongoOplogReader')
    */
@@ -66,6 +68,7 @@ class MongoOplogReader {
     this.oplogs = {};
     this.replSets = {};
     this.workersPerOplog = options.workersPerOplog || defaults.workersPerOplog;
+    this.maxConcurrencyPerWorker = options.maxConcurrencyPerWorker || defaults.maxConcurrencyPerWorker;
     this.keyPrefix = options.keyPrefix || defaults.keyPrefix;
     this.ttl = options.ttl || defaults.ttl;
     this.masterDuration = options.masterDuration || defaults.masterDuration;
@@ -353,8 +356,9 @@ class MongoOplogReader {
         debug(`${replSetName} ts: %s`, ts);
         const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
         const stream = createOplogStream(db, opts);
+        const maxConcurrency = this.maxConcurrencyPerWorker;
         this.oplogs[connStr] = stream;
-        stream.pipe(through2.obj((data, enc, done) => {
+        stream.pipe(through2Concurrent.obj({ maxConcurrency }, (data, enc, done) => {
           if (data.fromMigrate) return done(); // ignore shard balancing ops
           if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
           this.processOp(data, replSetName, memberName)

@@ -10,7 +10,7 @@ function getTs(startAt) {
  * Create a mongo oplog stream
  * @param db
  * @param options
- *   - startAt {Integer|} Oplog Timestamp to being stream, otherwise stream from now
+ *   - startAt {Integer|} Oplog Timestamp to begin streaming from, otherwise stream new event starting now
  * @return stream
  */
 function createOplogStream(db, options) {
