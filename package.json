@@ -23,11 +23,13 @@
   },
   "homepage": "https://github.com/WW-Digital/mongo-oplog-reader#readme",
   "dependencies": {
-    "mongo-oplog": "2.1.0",
-    "redislock": "1.3.0"
+    "bluebird": "^3.5.1",
+    "debug": "^3.1.0",
+    "mongodb": "^2.2.35",
+    "redislock": "^1.3.0",
+    "through2-concurrent": "^1.1.1"
   },
   "devDependencies": {
-    "bluebird": "^3.5.1",
     "redis": "^2.8.0"
   }
 }
