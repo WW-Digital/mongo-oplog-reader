@@ -285,10 +285,13 @@ class MongoOplogReader {
     return `${unixTime}|${opSeq}|${data.h}`;
   }
 
+  getOpMembersKey(opId) {
+    `${this.keyPrefix}:op:${opId}`;
+  }
+
   // determine if we've detected this op on the majority of replset members
-  isOpMajorityDetected(replSetName, memberName, data) {
-    const opId = this.getOpId(data);
-    const key = `${this.keyPrefix}:op:${opId}`;
+  isOpMajorityDetected(replSetName, memberName, opId) {
+    const key = this.getOpMembersKey(opId);
     // add this member to the set of members that received this op
     return this.redisClient.saddAsync(key, memberName)
       .then(() => this.redisClient.expireAsync(key, this.ttl))
@@ -300,18 +303,29 @@ class MongoOplogReader {
       });
   }
 
+  deleteOpMembers(opId) {
+    // wait a few seconds to prevent redundant workers from recreating the key immediately after it's deleted
+    // if a redundant worker is way slower, this key will be purged passively after the TTL
+    setTimeout(() => {
+      const key = this.getOpMembersKey(opId);
+      this.redisClient.delAsync(key);
+    }, 3000);
+  }
+
   processOp(data, replSetName, memberName) {
     debug(`processOp: ${replSetName} ${memberName} %o`, data);
-    return this.isOpMajorityDetected(replSetName, memberName, data)
+    const opId = this.getOpId(data);
+    return this.isOpMajorityDetected(replSetName, memberName, opId)
       .then(hasMajority => {
-        if (hasMajority) {
-          return this.emitEvent(data);
-        }
-      })
-      .then(justEmitted => {
-        if (justEmitted) {
-          return this.setLastOpTimestamp(replSetName, data);
-        }
+        if (!hasMajority) return;
+        return this.emitEvent(data)
+          .then(justEmitted => {
+            // event has been emitted, delete the OpMembers key in the background to free up redis memory
+            this.deleteOpMembers(opId);
+            if (justEmitted) {
+              return this.setLastOpTimestamp(replSetName, data);
+            }
+          });
       });
   }
 
