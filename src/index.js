@@ -267,7 +267,7 @@ class MongoOplogReader {
    */
   emitEvent(data) {
     const opId = this.getOpId(data);
-    const key = `${this.keyPrefix}:emittedEvents:${opId}`;
+    const key = `${this.keyPrefix}:emit:${opId}`;
     // check if this event has been emitted already by another process
     return this.redisClient.setnxAsync(key, true).then(notAlreadyEmitted => {
       const alreadyEmitted = !notAlreadyEmitted;
