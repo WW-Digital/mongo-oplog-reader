@@ -286,7 +286,7 @@ class MongoOplogReader {
   }
 
   getOpMembersKey(opId) {
-    `${this.keyPrefix}:op:${opId}`;
+    return `${this.keyPrefix}:op:${opId}`;
   }
 
   // determine if we've detected this op on the majority of replset members
