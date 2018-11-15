@@ -403,7 +403,7 @@ class MongoOplogReader {
           if (data.fromMigrate) return done(); // ignore shard balancing ops
           if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
           this.processOp(data, replSetName, memberName)
-            .then(() => Promise.delay(this.throttleDelay))
+            .then(() => Promise.delay(this.throttleDelay * 1000))
             .then(() => done())
             .catch(err => done(err));
         }));
