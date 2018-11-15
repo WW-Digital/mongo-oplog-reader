@@ -35,7 +35,8 @@ const defaultMongoConnectOptions = {
   autoReconnect: true,
   keepAlive: 5000,
   connectTimeoutMS: 30000,
-  socketTimeoutMS: 30000
+  socketTimeoutMS: 30000,
+  useNewUrlParser: true
 };
 
 const opCode = {
@@ -345,7 +346,9 @@ class MongoOplogReader {
 
   tailHost(connStr) {
     debug(`tailHost: ${connStr}`);
-    return MongoDB.MongoClient.connect(connStr, this.mongoConnectOptions).then(db => {
+    const client = new MongoDB.MongoClient(connStr, this.mongoConnectOptions);
+    client.connect().then(() => {
+      const db = client.db();
       // We may need this code to reconnect, need to test auto_reconnect
       // db.on('close', err => {
       //   console.log(connStr, err);

@@ -33,8 +33,9 @@ reader.onEvent(op => {
 });
 
 const url = 'mongodb://localhost:27017/testdb';
-
-MongoClient.connect(url).then(db => {
+const client = new MongoClient(url, { useNewUrlParser: true });
+client.connect().then(() => {
+  const db = client.db();
   return Promise.resolve()
     .then(() => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
     .then(() => console.log('inserted document 1'))
