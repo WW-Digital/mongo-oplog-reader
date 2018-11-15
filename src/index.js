@@ -81,6 +81,7 @@ class MongoOplogReader {
     this.assignmentsByConnStr = {};
     this.assignmentsByWorkerId = {};
     this.eventHandlers = [];
+    this.throttleDelay = 0;
 
     if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
       throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
@@ -112,6 +113,29 @@ class MongoOplogReader {
     // re-register this worker every 10 seconds by default
     const healthcheckMs = this.healthcheckDuration * 1000;
     this.healthcheckInterval = setInterval(() => this.registerWorker(), healthcheckMs);
+
+    // adjust throttling every 30 seconds
+    this.throttleAdjustmentInterval = setInterval(() => {
+      this.redisClient.infoAsync('memory')
+        .then(info => {
+          const usedMem = info.match(/used_memory:(\d*)/)[1];
+          const totalMem = info.match(/total_system_memory:(\d*)/)[1];
+          const memUsage = usedMem / totalMem;
+          /**
+           * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL:
+           * Redis usage:  |  Delay:       
+           *           0%  |  none
+           *          50%  |  none
+           *          75%  |  none
+           *        75.1%  |  ~5 minutes
+           *          76%  |  ~1 hour
+           *         100%  |  ~24 hours
+           */
+          this.throttleDelay = this.ttl * Math.max(memUsage - 0.75, 0) * 4;
+          debug('Redis Memory Usage:', memUsage);
+          debug('throttleDelay:', this.throttleDelay);
+        });
+    }, 3000);
   }
 
   /**
@@ -379,6 +403,7 @@ class MongoOplogReader {
           if (data.fromMigrate) return done(); // ignore shard balancing ops
           if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
           this.processOp(data, replSetName, memberName)
+            .then(() => Promise.delay(this.throttleDelay))
             .then(() => done())
             .catch(err => done(err));
         }));
