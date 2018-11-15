@@ -82,6 +82,7 @@ class MongoOplogReader {
     this.assignmentsByWorkerId = {};
     this.eventHandlers = [];
     this.throttleDelay = 0;
+    this.throttleMemUsageThreshold = 0.75;
 
     if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
       throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
@@ -122,7 +123,7 @@ class MongoOplogReader {
           const totalMem = info.match(/total_system_memory:(\d*)/)[1];
           const memUsage = usedMem / totalMem;
           /**
-           * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL:
+           * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL and 75% threshold:
            * Redis usage:  |  Delay:       
            *           0%  |  none
            *          50%  |  none
@@ -131,7 +132,8 @@ class MongoOplogReader {
            *          76%  |  ~1 hour
            *         100%  |  ~24 hours
            */
-          this.throttleDelay = this.ttl * Math.max(memUsage - 0.75, 0) * 4;
+          const memThreshold = this.throttleMemUsageThreshold;
+          this.throttleDelay = this.ttl * Math.max(memUsage - memThreshold, 0) / (1 - memThreshold);
           debug('Redis Memory Usage:', memUsage);
           debug('throttleDelay:', this.throttleDelay);
         });
