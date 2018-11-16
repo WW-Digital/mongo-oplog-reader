@@ -397,7 +397,7 @@ class MongoOplogReader {
       const startTs = this.startAt ? Promise.resolve(this.startAt) : this.getLastOpTimestamp(replSetName);
       return startTs.then(ts => {
         debug(`${replSetName} ts: %s`, ts);
-        const opts = { since: ts || 1 }; // start where we left off, otherwise from the beginning
+        const opts = { startAt: ts || 1 }; // start where we left off, otherwise from the beginning
         const stream = createOplogStream(db, opts);
         const maxConcurrency = this.maxConcurrencyPerWorker;
         this.oplogs[connStr] = stream;
