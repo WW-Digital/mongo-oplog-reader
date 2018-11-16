@@ -14,6 +14,10 @@ Notes:
 - The order of the oplog events is not guaranteed to be strictly chronological if there are multiple 
   workers per oplog
 
+## Requirements
+
+- Redis 3.2+
+
 ## Install
 
 ```
