@@ -121,7 +121,8 @@ class MongoOplogReader {
         .then(info => {
           const usedMem = info.match(/used_memory:(\d*)/)[1];
           const totalMem = info.match(/total_system_memory:(\d*)/)[1];
-          const memUsage = usedMem / totalMem;
+          const maxMem = info.match(/maxmemory:(\d*)/)[1];
+          const memUsage = usedMem / (maxMem || totalMem);
           /**
            * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL and 75% threshold:
            * Redis usage:  |  Delay:       
@@ -134,10 +135,10 @@ class MongoOplogReader {
            */
           const memThreshold = this.throttleMemUsageThreshold;
           this.throttleDelay = this.ttl * Math.max(memUsage - memThreshold, 0) / (1 - memThreshold);
-          debug('Redis Memory Usage:', memUsage);
+          debug('Redis Memory Usage:', usedMem, '/', totalMem, '=', memUsage);
           debug('throttleDelay:', this.throttleDelay);
         });
-    }, 3000);
+    }, 30000);
   }
 
   /**
@@ -296,7 +297,7 @@ class MongoOplogReader {
     const opId = this.getOpId(data);
     const key = `${this.keyPrefix}:emit:${opId}`;
     // check if this event has been emitted already by another process
-    return this.redisClient.setnxAsync(key, true).then(notAlreadyEmitted => {
+    return this.redisClient.setnxAsync(key, 1).then(notAlreadyEmitted => {
       const alreadyEmitted = !notAlreadyEmitted;
       if (alreadyEmitted) return false;
       return Promise.resolve()
