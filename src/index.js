@@ -82,7 +82,7 @@ class MongoOplogReader {
     this.assignmentsByWorkerId = {};
     this.eventHandlers = [];
     this.throttleDelay = 0;
-    this.throttleMemUsageThreshold = 0.75;
+    this.throttleMemUsageThreshold = options.throttleMemUsageThreshold; // decimal percent format, i.e. 0.85
 
     if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
       throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
@@ -96,6 +96,7 @@ class MongoOplogReader {
     return Promise.resolve()
       .then(() => this.registerWorker())
       .then(() => this.acquireMasterLock())
+      .then(() => this.setThrottleDelay())
       .then(() => this.startPolling());
   }
 
@@ -115,30 +116,38 @@ class MongoOplogReader {
     const healthcheckMs = this.healthcheckDuration * 1000;
     this.healthcheckInterval = setInterval(() => this.registerWorker(), healthcheckMs);
 
-    // adjust throttling every 30 seconds
-    this.throttleAdjustmentInterval = setInterval(() => {
-      this.redisClient.infoAsync('memory')
-        .then(info => {
-          const usedMem = info.match(/used_memory:(\d*)/)[1];
-          const totalMem = info.match(/total_system_memory:(\d*)/)[1];
-          const maxMem = info.match(/maxmemory:(\d*)/)[1];
-          const memUsage = usedMem / (maxMem || totalMem);
-          /**
-           * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL and 75% threshold:
-           * Redis usage:  |  Delay:       
-           *           0%  |  none
-           *          50%  |  none
-           *          75%  |  none
-           *        75.1%  |  ~5 minutes
-           *          76%  |  ~1 hour
-           *         100%  |  ~24 hours
-           */
-          const memThreshold = this.throttleMemUsageThreshold;
-          this.throttleDelay = this.ttl * Math.max(memUsage - memThreshold, 0) / (1 - memThreshold);
-          debug('Redis Memory Usage:', usedMem, '/', totalMem, '=', memUsage);
-          debug('throttleDelay:', this.throttleDelay);
-        });
-    }, 30000);
+    // adjust throttling every 10 seconds
+    this.throttleAdjustmentInterval = setInterval(() => this.setThrottleDelay(), 10000);
+  }
+
+  /**
+   * Slow down the rate of processing the oplog if redis memory usage is high
+   */
+  setThrottleDelay() {
+    if (!this.throttleMemUsageThreshold) {
+      return;
+    }
+    return this.redisClient.infoAsync('memory')
+      .then(info => {
+        const usedMem = info.match(/used_memory:(\d*)/)[1];
+        const totalMem = info.match(/total_system_memory:(\d*)/)[1];
+        const maxMem = info.match(/maxmemory:(\d*)/)[1];
+        const memUsage = usedMem / (maxMem || totalMem);
+        /**
+         * Throttle the throughput based on redis memory usage. For example, assuming 24 hour TTL and 75% threshold:
+         * Redis usage:  |  Delay:       
+         *           0%  |  none
+         *          50%  |  none
+         *          75%  |  none
+         *        75.1%  |  ~5 minutes
+         *          76%  |  ~1 hour
+         *         100%  |  ~24 hours
+         */
+        const memThreshold = this.throttleMemUsageThreshold;
+        this.throttleDelay = Math.floor(this.ttl * Math.max(memUsage - memThreshold, 0) / (1 - memThreshold));
+        debug('Redis Memory Usage:', usedMem, '/', totalMem, '=', memUsage);
+        debug('throttleDelay:', this.throttleDelay, 'seconds');
+      });
   }
 
   /**
@@ -403,12 +412,14 @@ class MongoOplogReader {
         const maxConcurrency = this.maxConcurrencyPerWorker;
         this.oplogs[connStr] = stream;
         stream.pipe(through2Concurrent.obj({ maxConcurrency }, (data, enc, done) => {
-          if (data.fromMigrate) return done(); // ignore shard balancing ops
-          if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
-          this.processOp(data, replSetName, memberName)
-            .then(() => Promise.delay(this.throttleDelay * 1000))
-            .then(() => done())
-            .catch(err => done(err));
+          Promise.delay(this.throttleDelay * 1000)
+            .then(() => {
+              if (data.fromMigrate) return done(); // ignore shard balancing ops
+              if (data.op === opCode.NOOP) return done(); // ignore informational no-operation
+              return this.processOp(data, replSetName, memberName)
+                .then(() => done())
+                .catch(err => done(err));
+            });
         }));
         stream.on('end', () => {
           // oplog stream ended, pick up where we left off with the same db connection
