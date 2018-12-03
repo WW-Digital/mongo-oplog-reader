@@ -41,10 +41,11 @@ const connectionStrings = [
   'mongodb://shard1-secondary1/local'
 ];
 
-const reader = new MongoOplogReader({ 
+const reader = new MongoOplogReader({
   redisClient,
   workersPerOplog: 1 // total # of redundant workers per oplog (respected across all processes)
 });
+reader.filter(oplogDocument => oplogDocument.op !== 'u'); // ignore 'update' operations
 reader.setConnectionStrings(connectionStrings);
 reader.onEvent(data => {
   // return a promise to apply backpressure on the oplog stream to prevent a 
