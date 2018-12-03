@@ -83,10 +83,15 @@ class MongoOplogReader {
     this.eventHandlers = [];
     this.throttleDelay = 0;
     this.throttleMemUsageThreshold = options.throttleMemUsageThreshold; // decimal percent format, i.e. 0.85
+    this.filterOp = () => true; // don't filter any ops by default
 
     if (!Number.isInteger(this.workersPerOplog) || this.workersPerOplog > 10 || this.workersPerOplog < 1) {
       throw new Error(`workersPerOplog '${this.workersPerOplog}' must be an integer between 1 and 10.`);
     }
+  }
+
+  filter(fn) {
+    this.filterOp = fn;
   }
 
   start() {
@@ -350,6 +355,8 @@ class MongoOplogReader {
   }
 
   processOp(data, replSetName, memberName) {
+    const skip = !this.filterOp(data);
+    if (skip) return Promise.resolve();
     debug(`processOp: ${replSetName} ${memberName} %o`, data);
     const opId = this.getOpId(data);
     return this.isOpMajorityDetected(replSetName, memberName, opId)

@@ -16,6 +16,8 @@ const reader = new MongoOplogReader({
   redisClient: redis.createClient()
 });
 
+reader.filter(oplogDocument => oplogDocument.op !== 'u'); // ignore 'update' operations
+
 let opCount = 0;
 let asyncOpCount = 0;
 
@@ -40,8 +42,14 @@ client.connect().then(() => {
     .then(() => db.collection('books').insert({ title: 'Hello 1', rand: Math.random() }))
     .then(() => console.log('inserted document 1'))
     .then(() => reader.start())
-    .then(() => db.collection('books').insert({ title: 'Hello 2', rand: Math.random() }))
-    .then(() => console.log('inserted document 2'))
+    .then(() => 
+      db.collection('books').insert({ title: 'Hello 2', rand: Math.random() })
+        .then(result => {
+          const query = { _id: result.insertedIds[0] };
+          console.log('inserted document 2')
+          return db.collection('books').findOneAndUpdate(query, { $set: { note: 'hi!' } });
+        })
+    )
     .delay(3000)
     .then(() => db.collection('books').insert({ title: 'Hello 3', rand: Math.random() }))
     .then(() => console.log('inserted document 3'))
